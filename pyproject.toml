@@ -1,0 +1,12 @@
+[project]
+name = "llm-communicate-mcp"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.13"
+dependencies = [
+    "ddgs>=9.11.2",
+    "mcp>=1.26.0",
+    "ollama>=0.6.1",
+    "python-telegram-bot>=21.0",
+    "python-dotenv>=1.0",
+]
