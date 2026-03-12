@@ -65,24 +65,36 @@ async def tooling_agent(query: str, session, ollama_tools: list) -> list[str]:
         {
             "role": "system",
             "content": (
-                "You are a routing and web search agent. Your job is to decide if the user's message requires a web search. "
-                f"Today's date is {today}. "
-                "Call the web_search tool ONLY when the query needs current, factual, time-sensitive information or for the one which you dont have data"
-                "(e.g. news, prices, weather, ongoing events, specific facts). "
-                "Do NOT call web_search for: greetings, casual conversation, opinions, general knowledge, "
-                "math, coding questions, or anything you can answer without the internet. "
-                "If no search is needed, do nothing — do not call any tool and do not respond. "
-                "If a search IS needed, craft the best possible search query: extract the core intent, "
-                "use specific keywords, include relevant context (e.g. product names, locations, timeframes), "
-                "and avoid filler words. Prefer concise, search-engine-style queries over full sentences."
+                "You are a search-routing agent. Your ONLY job is to decide whether a web search is required. "
+                f"Today's date is {today}. Your training data covers events up to early 2024.\n\n"
+                "CALL web_search ONLY for queries that meet ALL of these criteria:\n"
+                "  1. The answer changes frequently (news, prices, sports scores, weather, live events)\n"
+                "  2. OR the event likely occurred after early 2024 (recent releases, elections, discoveries)\n"
+                "  3. AND the question cannot be answered from general, stable knowledge\n\n"
+                "DO NOT call web_search for:\n"
+                "  - Greetings, small talk, or casual conversation (e.g. 'hello', 'how are you')\n"
+                "  - Math, logic, or reasoning questions (e.g. '2+2', 'sort this list')\n"
+                "  - Coding, programming, or technical how-to questions\n"
+                "  - Historical facts, geography, science, or definitions that don't change\n"
+                "  - Opinions, creative writing, summaries, or translations\n"
+                "  - Anything a knowledgeable person could answer without the internet\n\n"
+                "Examples — DO NOT search: 'What is the capital of France?', 'Write a poem', 'How does TCP work?'\n"
+                "Examples — DO search: 'Who won the 2025 Super Bowl?', 'Current Bitcoin price', 'Latest iPhone model'\n\n"
+                "If no search is needed, respond with exactly: NO_SEARCH\n"
+                "If a search IS needed, call web_search with a concise, keyword-focused query (no filler words)."
             ),
         },
         {"role": "user", "content": query},
     ]
 
     print(f"[Tooling Agent] Sending query to {TOOLING_MODEL}...")
-    response = ollama_client.chat(model=TOOLING_MODEL, messages=messages, tools=ollama_tools)
+    response = ollama_client.chat(model=TOOLING_MODEL, messages=messages, tools=ollama_tools, options={"temperature": 0.0})
     msg = response.message
+
+    # Explicit NO_SEARCH signal — skip tool loop entirely
+    if not msg.tool_calls and msg.content and "NO_SEARCH" in msg.content:
+        print("[Tooling Agent] Routing decision: no search needed.")
+        return []
 
     # Detect garbled tool-call in content (some Ollama builds emit JSON in content)
     if not msg.tool_calls and msg.content:
@@ -114,7 +126,7 @@ async def tooling_agent(query: str, session, ollama_tools: list) -> list[str]:
             messages.append({"role": "tool", "content": tool_text})
 
         # Let tooling LLM decide if it needs more searches
-        response = ollama_client.chat(model=TOOLING_MODEL, messages=messages, tools=ollama_tools)
+        response = ollama_client.chat(model=TOOLING_MODEL, messages=messages, tools=ollama_tools, options={"temperature": 0.0})
         msg = response.message
 
     return search_results
@@ -159,7 +171,7 @@ def chat_agent(query: str, search_results: list[str]) -> str:
     ]
 
     print(f"\n[Chat Agent] Synthesising answer with {CHAT_MODEL}...")
-    response = ollama_client.chat(model=CHAT_MODEL, messages=messages)
+    response = ollama_client.chat(model=CHAT_MODEL, messages=messages, options={"temperature": 0.7})
     return response.message.content or ""
 
 
