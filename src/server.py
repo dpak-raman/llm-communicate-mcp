@@ -1,8 +1,9 @@
 """
-MCP Server: exposes a web_search tool backed by DuckDuckGo.
+MCP Server: exposes a web_search tool backed by DuckDuckGo,
+and a run_powershell tool for local system queries.
 
 This server communicates over stdio — it is spawned as a subprocess by client.py.
-The MCP protocol handles all the JSON-RPC framing; we just define our tool here.
+The MCP protocol handles all the JSON-RPC framing; we just define our tools here.
 """
 import asyncio
 import sys
@@ -34,20 +35,43 @@ async def list_tools() -> list[types.Tool]:
                 },
                 "required": ["query"],
             },
-        )
+        ),
+        types.Tool(
+            name="run_powershell",
+            description=(
+                "Run a PowerShell command on the local Windows machine and return its output. "
+                "Use this for local system queries: disk space, running processes, environment variables, "
+                "installed software, file system checks, network info, or any other local system information."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "The PowerShell command to execute (read-only/query commands only)",
+                    },
+                },
+                "required": ["command"],
+            },
+        ),
     ]
 
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     """Execute a tool call requested by the client."""
-    if name != "web_search":
-        raise ValueError(f"Unknown tool: {name}")
+    if name == "web_search":
+        return await _web_search(arguments)
+    if name == "run_powershell":
+        return await _run_powershell(arguments)
+    raise ValueError(f"Unknown tool: {name}")
 
+
+async def _web_search(arguments: dict) -> list[types.TextContent]:
     query = arguments["query"]
     print(f"  [MCP Server] Searching DuckDuckGo for: {query!r}", file=sys.stderr, flush=True)
 
-    results = DDGS().text(query, max_results=  5 )
+    results = DDGS().text(query, max_results=5)
 
     print(f"  [MCP Server] Raw DDG results ({len(results) if results else 0} hits):", file=sys.stderr, flush=True)
     if results:
@@ -61,11 +85,39 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     if not results:
         text = "No results found."
     else:
-        lines = []
-        for i, r in enumerate(results, 1):
-            lines.append(f"{i}. {r['title']}\n  {r['body']}")
+        lines = [f"{i}. {r['title']}\n  {r['body']}" for i, r in enumerate(results, 1)]
         text = "\n\n".join(lines)
 
+    return [types.TextContent(type="text", text=text)]
+
+
+async def _run_powershell(arguments: dict) -> list[types.TextContent]:
+    command = arguments["command"]
+    print(f"  [MCP Server] Running PowerShell: {command!r}", file=sys.stderr, flush=True)
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "powershell", "-NoProfile", "-NonInteractive", "-Command", command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+    except asyncio.TimeoutError:
+        return [types.TextContent(type="text", text="Error: PowerShell command timed out after 30 seconds.")]
+    except FileNotFoundError:
+        return [types.TextContent(type="text", text="Error: PowerShell not found on this system.")]
+
+    output = stdout.decode(errors="replace").strip()
+    error  = stderr.decode(errors="replace").strip()
+
+    parts = []
+    if output:
+        parts.append(output)
+    if error:
+        parts.append(f"[stderr]\n{error}")
+    text = "\n\n".join(parts) if parts else "(no output)"
+
+    print(f"  [MCP Server] PowerShell result preview: {text[:200]}", file=sys.stderr, flush=True)
     return [types.TextContent(type="text", text=text)]
 
 

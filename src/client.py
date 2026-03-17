@@ -66,29 +66,49 @@ async def tooling_agent(query: str, session, ollama_tools: list) -> list[str]:
             "role": "system",
             "content": (
                 "You are a search-routing agent. Your ONLY job is to decide whether a web search is required. "
-                f"Today's date is {today}. Your training data covers events up to early 2024.\n\n"
-                "CALL web_search ONLY for queries that meet ALL of these criteria:\n"
-                "  1. The answer changes frequently (news, prices, sports scores, weather, live events)\n"
-                "  2. OR the event likely occurred after early 2024 (recent releases, elections, discoveries)\n"
-                "  3. AND the question cannot be answered from general, stable knowledge\n\n"
+                f"Today's date is {today}. Your training data has a knowledge cutoff of early 2024, "
+                f"so anything from early 2024 onward — roughly the past 2+ years — is likely outside your knowledge.\n\n"
+                "CALL web_search when the query meets ANY of these conditions:\n"
+                "  A. The answer is time-sensitive or changes frequently: news, current events, prices, sports results, "
+                "weather, stock markets, elections, ongoing conflicts, or live data.\n"
+                "  B. The event, release, or development likely occurred after early 2024: software versions, "
+                "product launches, political outcomes, scientific discoveries, deaths, appointments, awards.\n"
+                "  C. The question contains words like 'latest', 'current', 'now', 'today', 'this year', 'recent', "
+                "'news about', 'update on', or asks about an ongoing situation.\n"
+                "  D. The query asks about a specific person's recent statement, reply, reaction, response, or action "
+                "(e.g. 'what did X say about Y', 'X reply to Y', 'X response to Z').\n"
+                "  E. The query involves entertainment, celebrity, film industry, regional politics, or sports news — "
+                "even if you recognise the names involved. You cannot know what happened after your cutoff.\n\n"
+                "DEFAULT TO SEARCHING when you are unsure. Only skip the search if the query clearly and "
+                "unambiguously belongs to the DO NOT search list below.\n\n"
                 "DO NOT call web_search for:\n"
                 "  - Greetings, small talk, or casual conversation (e.g. 'hello', 'how are you')\n"
                 "  - Math, logic, or reasoning questions (e.g. '2+2', 'sort this list')\n"
                 "  - Coding, programming, or technical how-to questions\n"
-                "  - Historical facts, geography, science, or definitions that don't change\n"
-                "  - Opinions, creative writing, summaries, or translations\n"
-                "  - Anything a knowledgeable person could answer without the internet\n\n"
+                "  - Historical facts, geography, science, or definitions that do not change\n"
+                "  - Opinions, creative writing, summaries, or translations\n\n"
                 "Examples — DO NOT search: 'What is the capital of France?', 'Write a poem', 'How does TCP work?'\n"
-                "Examples — DO search: 'Who won the 2025 Super Bowl?', 'Current Bitcoin price', 'Latest iPhone model'\n\n"
-                "If no search is needed, respond with exactly: NO_SEARCH\n"
-                "If a search IS needed, call web_search with a concise, keyword-focused query (no filler words)."
+                "Examples — DO search: 'Who won the 2025 Super Bowl?', 'Current Bitcoin price', "
+                "'Latest Python release', 'Who is the current US president?', 'Recent AI model releases', "
+                "'Rajinikanth reply to TVK', 'Vijay latest news', 'What did the PM say about the budget?'\n\n"
+                "When calling web_search: write a concise keyword query (no filler words). "
+                "For regional/entertainment topics include the person's full name and context. "
+                "Include the current year when recency matters.\n\n"
+                "CALL run_powershell when the question requires live local system data, such as:\n"
+                "  - Disk space, CPU/RAM usage, running processes, or system uptime\n"
+                "  - Installed software, Windows version, or hardware info\n"
+                "  - Environment variables, network configuration, or firewall status\n"
+                "  - File system checks (does a path exist, list files, file size)\n"
+                "  - Anything that can only be answered by querying THIS machine right now\n"
+                "Use read-only PowerShell commands only (Get-*, dir, whoami, ipconfig, etc.).\n"
+                "DO NOT use run_powershell for web searches, general knowledge, or anything unrelated to the local system."
             ),
         },
         {"role": "user", "content": query},
     ]
 
     print(f"[Tooling Agent] Sending query to {TOOLING_MODEL}...")
-    response = ollama_client.chat(model=TOOLING_MODEL, messages=messages, tools=ollama_tools, options={"temperature": 0.0})
+    response = ollama_client.chat(model=TOOLING_MODEL, messages=messages, tools=ollama_tools, options={"temperature": 0.1})
     msg = response.message
 
     # Explicit NO_SEARCH signal — skip tool loop entirely
@@ -145,13 +165,16 @@ def chat_agent(query: str, search_results: list[str]) -> str:
     system_prompt = (
         "You are a helpful assistant for Deepak, who is from Tamil Nadu, India. "
         f"Today's date is {today}. "
-        "When search results are provided, follow these steps: "
-        "1. Read the question if it is answerable by you and not about current happening skip the search results and answer question directly"
-        "2. Read every result and identify only those that directly address the question. "
-        "3. Ignore results that are off-topic, promotional, or do not contribute useful information. "
-        "4. Synthesise a clear, concise answer solely from the relevant results. "
-        "If none of the results are relevant, say so honestly and answer from your own knowledge if you can. "
-        "When no search results are provided, answer directly from your own knowledge. "
+        "When search results are provided, follow these steps:\n"
+        "1. Determine if the question is about current events or recent information. "
+        "If yes, rely solely on the search results — do NOT substitute your training data, which may be outdated.\n"
+        "2. Read every result and identify only those that directly address the question.\n"
+        "3. Ignore results that are off-topic, promotional, or do not contribute useful information.\n"
+        "4. Synthesise a clear, concise answer from the relevant results. "
+        "When the results include dates or recency signals, mention them so the user knows how fresh the information is.\n"
+        "5. If the results conflict with each other, note the discrepancy and favour the most recent source.\n"
+        "If none of the results are relevant, say so honestly and answer from your own knowledge if possible.\n"
+        "When no search results are provided, answer directly from your own knowledge.\n"
         "Always be concise, accurate, and conversational."
     )
 
